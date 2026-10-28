@@ -25,6 +25,8 @@ class TrOCR:
         self.dtype = torch_dtype(self.device, cfg.project.fp16)
         self.processor = TrOCRProcessor.from_pretrained(self.model_name)
         self.model = VisionEncoderDecoderModel.from_pretrained(self.model_name, torch_dtype=self.dtype).to(self.device)
+        # compute_transition_scores reads config.vocab_size, which encoder-decoder configs only set on the decoder
+        self.model.config.vocab_size = self.model.config.decoder.vocab_size
         self.model.eval()
 
     def _words_with_conf(self, token_ids: list[int], token_probs: list[float]) -> list[dict]:

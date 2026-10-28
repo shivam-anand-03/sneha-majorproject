@@ -15,3 +15,4 @@ data/cache/
 *.env
 .env
 .cache/
+app/static/demo/
