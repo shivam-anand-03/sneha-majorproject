@@ -1,0 +1,262 @@
+# Every threshold, weight and model name used anywhere in the project lives here.
+# Code reads values via src.common.config.load_config(); nothing is hardcoded.
+
+project:
+  seed: 42
+  device: auto              # auto | cuda | cpu
+  fp16: true                # half precision for inference where supported
+  data_dir: data
+  output_dir: outputs
+  models_dir: models
+
+paths:
+  raw: data/raw
+  processed: data/processed
+  synthetic: data/synthetic
+  annotations: data/annotations
+  history: data/history/history.csv
+  fonts: data/fonts
+  overrides_log: outputs/logs/overrides.jsonl
+  experiments_log: outputs/logs/experiments.jsonl
+
+anonymization:
+  salt_env_var: AES_ANON_SALT     # secret salt read from env; never commit it
+  default_salt: change-me-local-only
+  id_prefix: STU_
+  hash_len: 10
+  # regexes for things that look like names / roll numbers in free text
+  roll_number_patterns:
+    - '\b\d{2}[A-Z]{2,4}\d{3,5}\b'      # e.g. 21CSE1234
+    - '\b[A-Z]{2,4}\d{6,10}\b'           # e.g. ENR20210001
+    - '\b\d{8,12}\b'                     # long numeric IDs
+
+external_api:
+  # Sending student handwriting to a third-party API is opt-in. Requires GEMINI_API_KEY too.
+  allow_gemini: false
+  api_key_env: GEMINI_API_KEY
+  timeout_s: 60
+  max_retries: 4
+  backoff_base_s: 2.0
+  calls_log: outputs/logs/llm_calls.jsonl
+
+pdf:
+  dpi: 300
+  backend: pymupdf          # pymupdf | pdf2image
+
+preprocess:
+  enabled: true
+  grayscale: true
+  denoise:
+    enabled: true
+    h: 10
+    template_window: 7
+    search_window: 21
+  clahe:
+    enabled: true
+    clip_limit: 2.0
+    tile_grid: 8
+  shadow_removal:
+    enabled: true
+    dilate_kernel: 7
+    median_blur: 21
+  deskew:
+    enabled: true
+    method: projection      # projection | hough
+    max_angle: 15.0         # degrees searched
+    coarse_step: 1.0
+    fine_step: 0.1
+    hough_threshold: 200
+  ruled_lines:
+    enabled: true
+    kernel_frac: 0.25       # horizontal kernel length as fraction of page width
+    min_line_frac: 0.4      # a detected rule must span this fraction of width
+    inpaint_radius: 3
+  binarize:                 # used ONLY for segmentation masks, never for OCR input
+    block_size: 35
+    C: 15
+
+segmentation:
+  method: projection        # projection | paddle (choose by measured recall)
+  projection:
+    smooth_window: 9
+    min_gap_rows: 4
+    min_line_height_frac: 0.008   # of page height
+    max_line_height_frac: 0.08
+    ink_threshold_frac: 0.02      # row is "ink" if > this fraction of max row ink
+    pad_px_frac: 0.004
+    min_col_ink_frac: 0.002
+  paddle:
+    det_model: PP-OCRv5_mobile_det
+    merge_y_overlap: 0.5
+  eval:
+    iou_threshold: 0.5
+
+layout:                      # text vs diagram separation
+  dilate_text_kernel_frac: [0.02, 0.004]   # (w,h) of page for word merging
+  min_diagram_area_frac: 0.01              # relative, not fixed pixels
+  min_diagram_height_frac: 0.06
+  min_diagram_width_frac: 0.08
+  max_text_line_height_frac: 0.05
+  text_density_max: 0.45       # diagrams are sparse line drawings
+  aspect_text_min: 3.0         # text blocks are wide and short
+  diagram_pad_frac: 0.01
+  merge_gap_frac: 0.03
+
+ocr:
+  engine: trocr              # trocr | paddle | vlm | gemini (choose by measured CER)
+  trocr:
+    model: microsoft/trocr-base-handwritten
+    num_beams: 4
+    max_new_tokens: 96
+    batch_size: 8
+  paddle:
+    lang: en
+    rec_model: PP-OCRv5_server_rec
+  vlm:
+    model: Qwen/Qwen2.5-VL-3B-Instruct   # 7B does not fit 6 GB; 3B 4-bit
+    fallback_model: Qwen/Qwen2-VL-2B-Instruct
+    load_in_4bit: true
+    max_new_tokens: 128
+    max_pixels: 401408       # 512*28*28 tokens cap per image
+  gemini:
+    # Only line/diagram crops are sent, never the full page (name/roll-no header stays local).
+    models: [gemini-2.5-flash, gemini-2.5-pro]   # tried in order; pro used for hard lines
+    hard_line_model_index: 1
+    temperature: 0.0
+    max_output_tokens: 256
+  confidence:
+    word_low_threshold: 0.60     # word prob below -> flag for review
+    line_low_threshold: 0.75     # mean line prob below -> VLM fallback + review
+    use_vlm_fallback: true
+    fallback_engine: vlm       # vlm (local Qwen) | gemini (external API)
+
+correction:
+  enabled: auto              # auto -> only if min_pairs verified pairs exist
+  min_pairs: 500
+  model: google/byt5-small
+  meaning_change_sim_threshold: 0.90   # SBERT sim(raw,corrected) below -> "meaning changed"
+  train:
+    epochs: 5
+    lr: 3.0e-4
+    batch_size: 8
+
+grading_text:
+  embedders:
+    - sentence-transformers/all-mpnet-base-v2
+    - sentence-transformers/stsb-roberta-large
+  primary_embedder: sentence-transformers/all-mpnet-base-v2
+  cross_encoder:
+    base_model: microsoft/deberta-v3-base
+    output_dir: models/cross_encoder_asag
+    max_length: 256
+    epochs: 3
+    lr: 2.0e-5
+    batch_size: 16
+    warmup_ratio: 0.1
+    datasets: [mohler, scientsbank, beetle]
+    scientsbank_label_map:      # 5-way -> [0,1]
+      correct: 1.0
+      partially_correct_incomplete: 0.5
+      contradictory: 0.0
+      irrelevant: 0.0
+      non_domain: 0.0
+    val_frac: 0.1
+  concepts:
+    extractor: keybert          # keybert | tfidf
+    top_n: 8
+    ngram_range: [1, 3]
+    diversity: 0.6
+    full_match: 0.80            # embedding sim >= -> matched
+    partial_match: 0.60         # embedding sim >= -> partial
+    fuzzy_ratio: 85             # rapidfuzz ratio for spelling errors
+  combiner:
+    type: ridge                 # ridge (fit on human-graded data)
+    alpha: 1.0
+    weights_path: models/text_combiner.json
+    features: [embed_sim, cross_encoder, concept_coverage]
+    # Anti keyword-stuffing: coverage only counts if cross-encoder agrees
+    coverage_gate_ce_min: 0.35
+  within_tolerance: 0.5         # % within +/- this many marks
+
+grading_diagram:
+  clip_model: openai/clip-vit-large-patch14
+  siglip_model: google/siglip-base-patch16-224
+  dino_model: facebook/dinov2-base
+  image_embedders: [clip, dino]       # any of clip, siglip, dino
+  embed_weights: {clip: 0.5, siglip: 0.0, dino: 0.5}
+  transform:                          # paper sigmoid T(x)=0.5+0.5/(1+exp(-k(x-c)))
+    k: 15
+    c: 0.875
+  vlm_rubric:
+    enabled: true
+    backend: local                    # local (Qwen2.5-VL) | gemini
+    criteria: [components, labels, arrows, structure]
+    max_new_tokens: 384
+  blend:                              # final = w_sim*sim + w_vlm*vlm
+    w_sim: 0.4
+    w_vlm: 0.6
+  render_size: 448
+
+grading:
+  weights:                            # paper: Grade = (w_t*Sim_text + w_d*Sim_diag)*Total
+    text: 0.7
+    diagram: 0.3
+  no_diagram_policy: text_only        # if key has no diagram -> text weight 1.0
+  round_to: 0.5
+
+history:
+  use_history_in_score: false         # NEVER silently on. Ablation only.
+  history_blend: 0.1                  # if enabled: final = (1-b)*model + b*predicted
+  anomaly_z: 2.0                      # |actual - predicted| / resid_std above -> flag
+  weak_topic_threshold: 0.5           # mean normalized score below -> weak topic
+  trend_window: 3
+  lgbm:
+    n_estimators: 200
+    learning_rate: 0.05
+    num_leaves: 15
+    min_child_samples: 5
+
+xai:
+  attribution: integrated_gradients  # integrated_gradients | shap
+  ig_steps: 32
+  shap_max_evals: 200
+  top_k_tokens: 5
+  faithfulness_delete_k: [1, 3, 5]
+  gradcam_target: dino               # clip | dino
+  justification:
+    engine: llm                       # llm | template
+    backend: local              # local (Qwen below) | gemini
+    model: Qwen/Qwen2.5-1.5B-Instruct
+    max_new_tokens: 220
+    load_in_4bit: false
+  review:
+    ocr_conf_threshold: 0.75
+    model_disagreement: 0.25          # |embed - cross_encoder| above -> review
+    diagram_disagreement: 0.35        # |sim - vlm| above -> review
+
+synthetic:
+  n_sheets: 40
+  page_size: [2480, 3508]             # A4 @ 300 dpi
+  margin_frac: 0.08
+  ruled_prob: 0.6
+  skew_max_deg: 6.0
+  shadow_prob: 0.4
+  noise_sigma: 6.0
+  diagram_prob: 0.6
+  font_size_range: [64, 84]
+  fonts:
+    - Caveat
+    - IndieFlower
+    - ShadowsIntoLight
+    - ReenieBeanie
+    - HomemadeApple
+    - PatrickHand
+  iam_lines_per_sheet: [4, 8]
+
+app:
+  api_host: 127.0.0.1
+  api_port: 8000
+  max_upload_mb: 40
+
+gpu:
+  oom_retry_batch_sizes: [8, 4, 2, 1]
