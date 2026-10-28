@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # One entry point for the project. Everything (venv, models, datasets, caches) stays inside this folder.
 #   ./dev.sh            -> setup if needed, then start the app on http://127.0.0.1:8000
-#   ./dev.sh setup      -> create .venv (Python 3.11), install deps, fetch fonts
+#   ./dev.sh setup      -> first run after cloning: install uv if missing, create .venv (Python 3.11),
+#                          install deps (CUDA torch if an NVIDIA GPU is found, else CPU), fetch fonts, run tests
 #   ./dev.sh start      -> start FastAPI + web UI
 #   ./dev.sh demo       -> start the app with the demo pipeline (no trained models needed)
 #   ./dev.sh train      -> fine-tune the cross-encoder + fit combiner weights (GPU recommended)
@@ -18,11 +19,28 @@ PY=.venv/bin/python
 PORT="${PORT:-8000}"
 
 setup() {
-  command -v uv >/dev/null || { echo "install uv first: curl -LsSf https://astral.sh/uv/install.sh | sh"; exit 1; }
+  command -v curl >/dev/null || { echo "curl is required (sudo apt install curl)"; exit 1; }
+  if ! command -v uv >/dev/null; then
+    echo "uv not found -> installing it to ~/.local/bin"
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+  fi
   [ -x "$PY" ] || uv venv --python 3.11 .venv
-  uv pip install --python "$PY" torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
-  grep -vE '^(torch|torchvision)==' requirements.txt | uv pip install --python "$PY" -r /dev/stdin
+  # TORCH_INDEX=cu124|cpu overrides the auto choice (CUDA wheels only when an NVIDIA driver answers)
+  local idx="${TORCH_INDEX:-cpu}" skip='^(torch|torchvision)=='
+  [ -z "${TORCH_INDEX:-}" ] && nvidia-smi -L >/dev/null 2>&1 && idx=cu124
+  [ "$(uname -s)" = Darwin ] && skip='^(torch|torchvision|bitsandbytes)=='   # no 4-bit on macOS
+  echo "installing torch ($idx wheels)"
+  uv pip install --python "$PY" torch==2.6.0 torchvision==0.21.0 --index-url "https://download.pytorch.org/whl/$idx"
+  grep -vE "$skip" requirements.txt | uv pip install --python "$PY" -r /dev/stdin
   fonts
+  mkdir -p outputs/logs
+  $PY -c "import torch; print('torch', torch.__version__, '| cuda available:', torch.cuda.is_available())"
+  $PY -m pytest
+  echo
+  echo "setup done. next:"
+  echo "  ./dev.sh demo    # try the UI now (no trained models needed)"
+  echo "  ./dev.sh train   # train the text grader (~15 min on GPU), then ./dev.sh start"
 }
 
 fonts() {
@@ -58,5 +76,5 @@ case "${1:-auto}" in
              $PY -m scripts.eval_history
              $PY -m scripts.eval_e2e ;;
   test)      $PY -m pytest ;;
-  *)         sed -n '2,10p' "$0"; exit 1 ;;
+  *)         sed -n '2,11p' "$0"; exit 1 ;;
 esac

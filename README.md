@@ -18,8 +18,16 @@ PDF/image ─► 300 dpi pages ─► preprocess (gray, shadow, denoise, deskew,
 
 ## Quick start
 
+After cloning, one command sets everything up. It installs uv if needed, Python 3.11, CUDA or CPU torch, deps and fonts, then runs the tests:
+
 ```bash
-./dev.sh setup     # .venv (Python 3.11, CUDA torch) + deps + fonts; all caches live in ./.cache
+git clone https://github.com/shivam-anand-03/sneha-majorproject.git && cd sneha-majorproject && ./dev.sh setup
+```
+
+Docs: [setup and troubleshooting](docs/setup.md) · [usage, API and config](docs/usage.md) · [architecture](docs/architecture.md)
+
+```bash
+./dev.sh setup     # first run: uv + .venv (Python 3.11) + torch (CUDA if GPU) + deps + fonts + tests; caches in ./.cache
 ./dev.sh train     # fine-tune cross-encoder on Mohler+SciEntsBank+Beetle, fit combiner (~15 min on RTX 4050)
 ./dev.sh           # start the app → http://127.0.0.1:8000
 ./dev.sh demo      # app with the demo pipeline (no trained models needed)
