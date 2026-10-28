@@ -11,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-export UV_CACHE_DIR="$PWD/.cache/uv" HF_HOME="$PWD/.cache/huggingface" \
+export UV_CACHE_DIR="$PWD/.cache/uv" UV_PYTHON_INSTALL_DIR="$PWD/.cache/python" HF_HOME="$PWD/.cache/huggingface" \
        PADDLE_PDX_CACHE_HOME="$PWD/.cache/paddlex" TORCH_HOME="$PWD/.cache/torch" \
        HF_HUB_DISABLE_XET=1 TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1
 PY=.venv/bin/python
