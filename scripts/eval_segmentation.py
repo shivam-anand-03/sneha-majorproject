@@ -5,6 +5,7 @@ python -m scripts.eval_segmentation [--methods projection paddle] [--debug 3]
 from __future__ import annotations
 
 import argparse
+import json
 
 import numpy as np
 import pandas as pd
@@ -69,7 +70,10 @@ def main() -> None:
     table = pd.DataFrame(results).T
     print(table.round(3).to_string())
     out = resolve(cfg, cfg.project.output_dir)
-    save_json(results, out / "metrics_segmentation.json")
+    path = out / "metrics_segmentation.json"
+    merged = json.loads(path.read_text()) if path.exists() else {}
+    merged.update(results)
+    save_json(merged, path)
     log_experiment(cfg, "segmentation", results, config_sections=["preprocess", "segmentation", "layout"])
 
 

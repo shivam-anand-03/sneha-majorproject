@@ -16,7 +16,7 @@ class PaddleRec:
         from paddleocr import TextRecognition
 
         self.cfg = cfg
-        self.model = TextRecognition(model_name=cfg.ocr.paddle.rec_model)
+        self.model = TextRecognition(model_name=cfg.ocr.paddle.rec_model, enable_mkldnn=False)
 
     def recognize(self, crops: list[np.ndarray]) -> list[OCRLine]:
         out = []

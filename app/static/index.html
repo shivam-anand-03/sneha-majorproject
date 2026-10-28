@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Answer Sheet Evaluation</title>
+<link rel="preload" href="/fonts/inter-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="wordmark" href="/" aria-label="Start a new evaluation">
+      <span class="wordmark-title">Answer Sheet Evaluation</span>
+      <span class="wordmark-sub">Handwritten answers, marked with reasons</span>
+    </a>
+    <div class="topbar-meta">
+      <span id="pipeline-badge" class="badge" hidden></span>
+      <button id="new-btn" class="btn btn-quiet" type="button" hidden>New evaluation</button>
+    </div>
+  </div>
+</header>
+
+<main id="app">
+  <!-- SETUP -->
+  <section id="view-setup" class="view setup" aria-labelledby="setup-title">
+    <div class="setup-intro">
+      <h1 id="setup-title" class="page-title">Evaluate an answer sheet</h1>
+      <p class="lede">Give the model answer and the student's sheet. You get the transcription, the marks,
+        and the evidence behind every mark. Nothing is final until you confirm it.</p>
+    </div>
+    <form id="setup-form" class="setup-grid" novalidate>
+      <fieldset class="panel">
+        <legend class="section-head">Answer key</legend>
+        <label class="field"><span class="label">Question</span>
+          <textarea name="question" rows="2" placeholder="What is the role of a prototype program in problem solving?"></textarea></label>
+        <label class="field"><span class="label">Model answer <em class="req">required</em></span>
+          <textarea name="reference_text" rows="5" required placeholder="The answer an examiner expects, in full sentences."></textarea></label>
+        <div class="field-row">
+          <label class="field field-narrow"><span class="label">Total marks</span>
+            <input name="total_marks" type="number" min="0.5" max="1000" step="0.5" value="10" required inputmode="decimal"></label>
+          <label class="field"><span class="label">Topic</span>
+            <input name="topic" type="text" placeholder="e.g. Software engineering"></label>
+        </div>
+        <label class="field"><span class="label">Marking rubric</span>
+          <textarea name="rubric" rows="3" placeholder="Optional. e.g. 2 marks for the definition, 1 for an example, 2 for a labelled diagram."></textarea></label>
+        <div class="field">
+          <span class="label">Reference diagram</span>
+          <label class="file-pick" id="ref-pick">
+            <input name="reference_diagram" type="file" accept=".png,.jpg,.jpeg">
+            <span class="file-pick-text">Optional. PNG or JPG of the expected diagram.</span>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset class="panel">
+        <legend class="section-head">Student sheet</legend>
+        <label class="dropzone" id="dropzone">
+          <input id="sheet-input" name="sheet" type="file" accept=".pdf,.png,.jpg,.jpeg" required>
+          <span class="dropzone-title">Drop the scanned sheet here</span>
+          <span class="dropzone-sub">PDF, PNG or JPG. Up to <span id="max-mb">40</span> MB. Scans at 300 DPI work best.</span>
+          <span class="dropzone-file" id="sheet-name" hidden></span>
+        </label>
+        <label class="field"><span class="label">Student ID</span>
+          <input name="student_id" type="text" autocomplete="off" placeholder="Roll number. Stored only as an anonymous code."></label>
+        <p class="note">The student ID is replaced by a salted code before anything is saved.
+          Names and roll numbers are never stored.</p>
+        <div class="form-actions">
+          <p id="form-error" class="form-error" role="alert" hidden></p>
+          <button class="btn btn-primary" type="submit" id="submit-btn">Evaluate sheet</button>
+        </div>
+      </fieldset>
+    </form>
+  </section>
+
+  <!-- LOADING -->
+  <section id="view-loading" class="view" hidden aria-live="polite">
+    <p class="status-line"><span class="status-dot"></span><span id="loading-text">Reading the sheet: cleaning the page and finding lines</span></p>
+    <div class="result-grid skeleton-grid" aria-hidden="true">
+      <div class="col-booklet"><div class="sk sk-title"></div><div class="sk sk-page"></div></div>
+      <div class="col-lines"><div class="sk sk-title"></div><div class="sk sk-row"></div><div class="sk sk-row"></div><div class="sk sk-row"></div><div class="sk sk-row"></div></div>
+      <div class="col-sheet"><div class="sk sk-seal"></div><div class="sk sk-block"></div><div class="sk sk-block"></div></div>
+    </div>
+  </section>
+
+  <!-- RESULT -->
+  <section id="view-result" class="view" hidden>
+    <div id="review-banner" class="review-banner" hidden role="status"></div>
+    <div class="result-head">
+      <div>
+        <h1 class="page-title" id="result-title" tabindex="-1">Sheet</h1>
+        <p class="caption" id="result-meta"></p>
+      </div>
+      <div class="result-actions">
+        <a class="btn btn-secondary" id="export-csv" download>Export CSV</a>
+        <a class="btn btn-secondary" id="export-json" download>Export JSON</a>
+      </div>
+    </div>
+
+    <div class="result-grid">
+      <section class="col-booklet panel" aria-labelledby="booklet-head">
+        <div class="panel-head"><h2 id="booklet-head" class="section-head">Answer sheet</h2>
+          <label class="toggle"><input type="checkbox" id="show-boxes" checked> Show detected regions</label></div>
+        <div class="page-frame" id="page-frame"></div>
+        <p class="caption" id="page-caption"></p>
+      </section>
+
+      <section class="col-lines panel" aria-labelledby="lines-head">
+        <div class="panel-head"><h2 id="lines-head" class="section-head">Transcription</h2>
+          <span class="caption">Click a line to correct it</span></div>
+        <ol class="lines" id="lines"></ol>
+        <div class="regrade-bar" id="regrade-bar" hidden>
+          <span id="regrade-count"></span>
+          <button class="btn btn-quiet" type="button" id="discard-edits">Discard</button>
+          <button class="btn btn-primary" type="button" id="regrade-btn">Re-mark with corrections</button>
+        </div>
+        <div id="diagrams"></div>
+      </section>
+
+      <aside class="col-sheet" aria-label="Marking sheet">
+        <div class="panel seal-panel">
+          <div class="seal" id="seal"></div>
+          <dl class="breakdown" id="breakdown"></dl>
+        </div>
+        <div class="panel">
+          <h2 class="section-head">Key points</h2>
+          <table class="concepts"><thead><tr><th scope="col">Point in model answer</th><th scope="col">Status</th><th scope="col">Student wrote</th></tr></thead>
+            <tbody id="concepts"></tbody></table>
+        </div>
+        <div class="panel">
+          <h2 class="section-head">Words that moved the text score</h2>
+          <p class="attr-legend"><span class="sw sw-ok"></span>raised it <span class="sw sw-miss"></span>lowered it</p>
+          <p class="attribution" id="attribution"></p>
+        </div>
+        <div class="panel" id="history-panel" hidden>
+          <h2 class="section-head">Learning history</h2>
+          <div id="history"></div>
+        </div>
+        <div class="panel">
+          <h2 class="section-head">Justification</h2>
+          <p class="justification" id="justification"></p>
+          <p class="caption" id="justification-engine"></p>
+        </div>
+        <div class="panel">
+          <h2 class="section-head">Teacher decision</h2>
+          <div id="override-current"></div>
+          <form id="override-form" class="override-form" novalidate>
+            <div class="field-row">
+              <label class="field field-narrow"><span class="label">Marks</span>
+                <input name="marks" type="number" min="0" step="0.5" required inputmode="decimal"></label>
+              <label class="field"><span class="label">Your name</span>
+                <input name="teacher" type="text" required autocomplete="name"></label>
+            </div>
+            <label class="field"><span class="label">Reason</span>
+              <textarea name="reason" rows="2" required placeholder="e.g. Diagram is correct but drawn on the next page."></textarea></label>
+            <p class="form-error" id="override-error" role="alert" hidden></p>
+            <button class="btn btn-secondary" type="submit">Record override</button>
+          </form>
+        </div>
+      </aside>
+    </div>
+  </section>
+</main>
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>

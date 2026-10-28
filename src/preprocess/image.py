@@ -91,19 +91,70 @@ def estimate_skew_hough(binary: np.ndarray, cfg: Config) -> float:
     return float(np.median(angles)) if angles else 0.0
 
 
-def remove_ruled_lines(gray: np.ndarray, binary: np.ndarray, cfg: Config) -> tuple[np.ndarray, np.ndarray, int]:
-    """Detect long horizontal rules by morphological opening; inpaint them out of gray and mask."""
+def _horizontal_rule_mask(binary: np.ndarray, cfg: Config) -> tuple[np.ndarray, int]:
+    """Rules break into pieces where they cross text (adaptive threshold rises near dark ink),
+    so pieces are grouped by row; a row counts as a rule when its pieces jointly cover
+    min_line_frac of the width AND reach both page edges (diagram box edges never do)."""
     r = cfg.preprocess.ruled_lines
-    w = gray.shape[1]
-    k = max(15, int(w * r.kernel_frac))
+    H, W = binary.shape
+    k = max(15, int(W * r.kernel_frac))
     horiz = cv2.morphologyEx(binary, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (k, 1)))
-    n, labels, stats, _ = cv2.connectedComponentsWithStats(horiz, 8)
+    n, labels, stats, cents = cv2.connectedComponentsWithStats(horiz, 8)
+    tol = max(2, int(r.row_tolerance_frac * H))
+    order = sorted(range(1, n), key=lambda i: cents[i][1])
+    groups: list[list[int]] = []
+    for i in order:
+        if groups and cents[i][1] - cents[groups[-1][-1]][1] <= tol:
+            groups[-1].append(i)
+        else:
+            groups.append([i])
     mask = np.zeros_like(binary)
     count = 0
-    for i in range(1, n):
-        if stats[i, cv2.CC_STAT_WIDTH] >= r.min_line_frac * w:
-            mask[labels == i] = 255
+    edge = r.edge_span_frac * W
+    col_tol = max(2, r.collinear_tol_frac * H)
+    for g in groups:
+        # keep only pieces collinear with the row's dominant (width-weighted) y and as thin as the rule;
+        # a hand-drawn box edge lying near a rule is offset/thicker and survives
+        ws = np.array([stats[i, cv2.CC_STAT_WIDTH] for i in g], float)
+        cy = np.array([cents[i][1] for i in g])
+        hs = np.array([stats[i, cv2.CC_STAT_HEIGHT] for i in g], float)
+        order_y = np.argsort(cy)
+        y_dom = cy[order_y][np.searchsorted(np.cumsum(ws[order_y]), ws.sum() / 2)]
+        h_dom = np.median(hs[np.abs(cy - y_dom) <= col_tol])
+        g = [i for i, y, h in zip(g, cy, hs) if abs(y - y_dom) <= col_tol and h <= r.thickness_factor * h_dom]
+        if not g:
+            continue
+        x0 = min(stats[i, cv2.CC_STAT_LEFT] for i in g)
+        x1 = max(stats[i, cv2.CC_STAT_LEFT] + stats[i, cv2.CC_STAT_WIDTH] for i in g)
+        cover = sum(stats[i, cv2.CC_STAT_WIDTH] for i in g)
+        if cover >= r.min_line_frac * W and x0 <= edge and x1 >= W - edge:
+            for i in g:
+                mask[labels == i] = 255
             count += 1
+    return mask, count
+
+
+def _vertical_rule_mask(binary: np.ndarray, cfg: Config) -> np.ndarray:
+    """Margin lines: long vertical runs spanning most of the page height."""
+    r = cfg.preprocess.ruled_lines
+    H = binary.shape[0]
+    vk = max(15, int(H * r.kernel_frac))
+    vert = cv2.morphologyEx(binary, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, vk)))
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(vert, 8)
+    mask = np.zeros_like(binary)
+    for i in range(1, n):
+        if stats[i, cv2.CC_STAT_HEIGHT] >= r.min_vertical_frac * H:
+            mask[labels == i] = 255
+    return mask
+
+
+def remove_ruled_lines(gray: np.ndarray, binary: np.ndarray, cfg: Config) -> tuple[np.ndarray, np.ndarray, int]:
+    """Remove notebook rules and margin lines from both the OCR image (inpaint) and the mask."""
+    r = cfg.preprocess.ruled_lines
+    mask, count = _horizontal_rule_mask(binary, cfg)
+    vmask = _vertical_rule_mask(binary, cfg)
+    count += int(vmask.any())
+    mask = cv2.bitwise_or(mask, vmask)
     if count == 0:
         return gray, binary, 0
     mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))

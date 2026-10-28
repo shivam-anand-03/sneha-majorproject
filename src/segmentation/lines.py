@@ -25,6 +25,21 @@ def _split_tall(prof: np.ndarray, s: int, e: int, max_h: int, min_h: int) -> lis
     return _split_tall(prof, s, cut, max_h, min_h) + _split_tall(prof, cut, e, max_h, min_h)
 
 
+def _typical_line_height(text_mask: np.ndarray, bands: list, min_h: int, p, H: int) -> float:
+    """Line height estimate for splitting touching lines. Band heights alone fail when most bands
+    are merged pairs, so the upper quartile of word/letter component heights is used as well."""
+    import cv2
+
+    heights = [e - s for s, e in bands if e - s >= min_h]
+    band_med = float(np.median(heights)) if heights else p.max_line_height_frac * H
+    _, _, stats, _ = cv2.connectedComponentsWithStats(text_mask, 8)
+    ch = stats[1:, cv2.CC_STAT_HEIGHT]
+    ch = ch[ch >= max(min_h // 2, 2)]
+    if len(ch) < 5:
+        return band_med
+    return min(band_med, p.cc_line_factor * float(np.percentile(ch, 75)))
+
+
 def segment_projection(text_mask: np.ndarray, cfg: Config) -> list[Box]:
     p = cfg.segmentation.projection
     H, W = text_mask.shape
@@ -43,7 +58,8 @@ def segment_projection(text_mask: np.ndarray, cfg: Config) -> list[Box]:
         else:
             merged.append([s, e])
     min_h = int(p.min_line_height_frac * H)
-    max_h = int(p.max_line_height_frac * H)
+    typical = _typical_line_height(text_mask, merged, min_h, p, H)
+    max_h = int(min(p.max_line_height_frac * H, p.split_factor * typical))
     pad = int(p.pad_px_frac * H)
     boxes: list[Box] = []
     for s, e in merged:
@@ -66,7 +82,7 @@ def segment_paddle(gray: np.ndarray, text_mask: np.ndarray, cfg: Config) -> list
 
     global _PADDLE_DET
     if "_PADDLE_DET" not in globals():
-        _PADDLE_DET = TextDetection(model_name=cfg.segmentation.paddle.det_model)
+        _PADDLE_DET = TextDetection(model_name=cfg.segmentation.paddle.det_model, enable_mkldnn=False)
     img = np.stack([gray] * 3, -1)
     res = _PADDLE_DET.predict(img)[0]
     polys = res["dt_polys"]

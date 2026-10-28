@@ -41,6 +41,22 @@ def _merge_boxes(boxes: list[Box], gap: int) -> list[Box]:
     return [tuple(b) for b in boxes]
 
 
+def _hollow_components(binary: np.ndarray, labels: np.ndarray, stats: np.ndarray, L, page_area: int) -> set[int]:
+    """Closed outlines (boxes, circles): enclosed area >> ink area. Letters like 'o' are hollow
+    too but tiny, so a page-relative minimum enclosed area is required."""
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    out: set[int] = set()
+    for c in contours:
+        enclosed = cv2.contourArea(c)
+        if enclosed < L.min_hollow_area_frac * page_area:
+            continue
+        x, y = c[0][0]
+        lab = int(labels[y, x])
+        if lab and enclosed / max(stats[lab, cv2.CC_STAT_AREA], 1) >= L.hollow_ratio:
+            out.add(lab)
+    return out
+
+
 def separate(binary: np.ndarray, cfg: Config, enabled: bool = True) -> Layout:
     if not enabled:
         return Layout(binary.copy(), [])
@@ -48,13 +64,13 @@ def separate(binary: np.ndarray, cfg: Config, enabled: bool = True) -> Layout:
     H, W = binary.shape
     n, labels, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
     max_text_h = L.max_text_line_height_frac * H
+    hollow = _hollow_components(binary, labels, stats, L, H * W)
     seeds: list[Box] = []
     for i in range(1, n):
         x, y, w, h, area = stats[i]
-        if h <= max_text_h:
-            continue
-        density = area / float(w * h)
-        if density <= L.text_density_max and w >= L.min_diagram_width_frac * W * 0.5:
+        tall_sparse = (h > max_text_h and area / float(w * h) <= L.text_density_max
+                       and w >= L.min_diagram_width_frac * W * 0.5)
+        if tall_sparse or i in hollow:
             seeds.append((x, y, x + w, y + h))
     gap = int(L.merge_gap_frac * max(H, W))
     regions = _merge_boxes(seeds, gap)

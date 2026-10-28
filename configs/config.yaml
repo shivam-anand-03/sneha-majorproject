@@ -68,8 +68,13 @@ preprocess:
     hough_threshold: 200
   ruled_lines:
     enabled: true
-    kernel_frac: 0.25       # horizontal kernel length as fraction of page width
-    min_line_frac: 0.4      # a detected rule must span this fraction of width
+    kernel_frac: 0.04       # opening kernel length (fraction of page width/height)
+    min_line_frac: 0.4      # pieces in one row must jointly cover this fraction of width
+    edge_span_frac: 0.12    # ...and reach within this fraction of both page edges
+    row_tolerance_frac: 0.003
+    collinear_tol_frac: 0.001  # pieces must lie within this of the row's dominant y
+    thickness_factor: 1.6      # and be no thicker than this x the rule
+    min_vertical_frac: 0.5  # vertical margin line must span this fraction of height
     inpaint_radius: 3
   binarize:                 # used ONLY for segmentation masks, never for OCR input
     block_size: 35
@@ -82,6 +87,8 @@ segmentation:
     min_gap_rows: 4
     min_line_height_frac: 0.008   # of page height
     max_line_height_frac: 0.08
+    split_factor: 1.7             # split bands taller than this x typical line height
+    cc_line_factor: 1.3           # typical line height ~ this x 75th pct component height
     ink_threshold_frac: 0.02      # row is "ink" if > this fraction of max row ink
     pad_px_frac: 0.004
     min_col_ink_frac: 0.002
@@ -101,6 +108,8 @@ layout:                      # text vs diagram separation
   aspect_text_min: 3.0         # text blocks are wide and short
   diagram_pad_frac: 0.01
   merge_gap_frac: 0.03
+  hollow_ratio: 5.0            # enclosed area / ink area for closed shapes (boxes)
+  min_hollow_area_frac: 0.002  # of page area; excludes letters like "o"
 
 ocr:
   engine: trocr              # trocr | paddle | vlm | gemini (choose by measured CER)
@@ -148,10 +157,10 @@ grading_text:
   cross_encoder:
     base_model: microsoft/deberta-v3-base
     output_dir: models/cross_encoder_asag
-    max_length: 256
+    max_length: 192
     epochs: 3
     lr: 2.0e-5
-    batch_size: 16
+    batch_size: 8              # 6 GB GPU shared; 16 OOMs with another model resident
     warmup_ratio: 0.1
     datasets: [mohler, scientsbank, beetle]
     scientsbank_label_map:      # 5-way -> [0,1]
@@ -217,12 +226,12 @@ history:
     min_child_samples: 5
 
 xai:
-  attribution: integrated_gradients  # integrated_gradients | shap
+  attribution: integrated_gradients  # integrated_gradients | shap | none (batch eval)
   ig_steps: 32
   shap_max_evals: 200
   top_k_tokens: 5
   faithfulness_delete_k: [1, 3, 5]
-  gradcam_target: dino               # clip | dino
+  gradcam_target: dino               # clip | dino | none
   justification:
     engine: llm                       # llm | template
     backend: local              # local (Qwen below) | gemini
